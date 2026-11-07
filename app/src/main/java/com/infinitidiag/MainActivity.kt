@@ -79,6 +79,8 @@ private fun InfinitiDiagUX() {
     var command by remember { mutableStateOf("0100") }
     var scanRunning by remember { mutableStateOf(false) }
     var scanDone by remember { mutableStateOf(false) }
+    var nissanScanRunning by remember { mutableStateOf(false) }
+    var nissanScanResults by remember { mutableStateOf<List<String>>(emptyList()) }
     var moduleStatus by remember { mutableStateOf(mapOf<String,String>()) }
     var rpm by remember { mutableStateOf("--") }
     var coolant by remember { mutableStateOf("--") }
@@ -305,7 +307,7 @@ private fun InfinitiDiagUX() {
                                 }
                             }
                         }
-                        item { Text("Modules listed are intended targets. Most Nissan-specific module access is not implemented/verified yet.",color=TextMuted,fontSize=11.sp) }
+                        item { Text("A response is required before a module is marked detected. A CAN address probe does not establish full CONSULT coverage. Modules such as ABS/VDC, AWD, SRS, BCM, IPDM and meter may use Nissan-specific addressing/services that this prototype does not yet implement.",color=TextMuted,fontSize=11.sp) }
                     }
                     "Live Data" -> {
                         item { SectionHeader("Live engine data","Generic OBD-II PIDs") }
@@ -336,13 +338,63 @@ private fun InfinitiDiagUX() {
                             },modifier=Modifier.fillMaxWidth()) { Text(if(scanRunning)"Scanning..." else "Run engine ECU scan") }
                             if(scanDone) Text("Engine ECU scan completed. Check log for raw response.",color=Accent)
                         } } }
+                        item {
+                            Card(colors=CardDefaults.cardColors(containerColor=Panel),shape=RoundedCornerShape(16.dp)) {
+                                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                                    Text("Nissan CAN address probe",fontWeight=FontWeight.SemiBold)
+                                    Text("Read-only exploratory probe for standard 11-bit diagnostic request IDs 7E0–7E7. Sends UDS default-session request (10 01) and records positive replies. This is not a full CONSULT-III scan and may miss Nissan proprietary addressing.",color=TextMuted,fontSize=12.sp)
+                                    Button(enabled=isConnected && !nissanScanRunning,onClick={
+                                        nissanScanRunning=true
+                                        nissanScanResults=emptyList()
+                                        scope.launch {
+                                            val found=mutableListOf<String>()
+                                            try {
+                                                send("ATSP6",1500)
+                                                send("ATH1",1000)
+                                                send("ATCAF1",1000)
+                                                for (id in 0x7E0..0x7E7) {
+                                                    val header="%03X".format(id)
+                                                    send("ATSH $header",1000)
+                                                    val response=send("10 01",2200)
+                                                    val normalized=response.uppercase().replace(Regex("[^0-9A-F]"),"")
+                                                    val positive=normalized.contains("5001")
+                                                    val label="TX $header → ${if(positive)"positive 50 01 response" else response.take(120)}"
+                                                    found.add(label)
+                                                    addLog("Nissan CAN probe $header: $response")
+                                                    if(positive) {
+                                                        val moduleName=when(id) {
+                                                            0x7E0 -> "ECM (candidate 7E0)"
+                                                            0x7E1 -> "TCM (candidate 7E1)"
+                                                            else -> "Nissan CAN endpoint $header"
+                                                        }
+                                                        moduleStatus=moduleStatus+(moduleName to "Responded to diagnostic session request")
+                                                    }
+                                                }
+                                            } catch(e:Exception) {
+                                                found.add("Probe stopped: ${e.message}")
+                                            } finally {
+                                                send("ATSH 7DF",1000)
+                                                send("ATCAF1",1000)
+                                                nissanScanResults=found
+                                                nissanScanRunning=false
+                                            }
+                                        }
+                                    },modifier=Modifier.fillMaxWidth()) { Text(if(nissanScanRunning)"Probing CAN addresses…" else "Start Nissan CAN probe") }
+                                    if(nissanScanResults.isNotEmpty()) {
+                                        Text("Probe results",fontWeight=FontWeight.Medium)
+                                        nissanScanResults.forEach { Text(it,color=TextMuted,fontSize=11.sp) }
+                                    }
+                                    Text("Safety: no DTC clearing, coding, actuator tests, or configuration writes are performed.",color=Accent,fontSize=11.sp)
+                                }
+                            }
+                        }
                     }
                     else -> {
                         item { SectionHeader("Settings","Diagnostics configuration") }
                         item { Card(colors=CardDefaults.cardColors(containerColor=Panel)) { Column(Modifier.padding(14.dp)) {
                             Text("Adapter: Bluetooth Classic SPP")
                             Text("Protocol setup: ELM auto / CAN 11-bit 500 kbps",color=TextMuted,fontSize=12.sp)
-                            Text("VIN decoding, CONSULT profile, and advanced module protocols are planned.",color=TextMuted,fontSize=12.sp)
+                            Text("Generic OBD-II is verified. Nissan CAN address probing is experimental; proprietary CONSULT services, module DTC decoding, data monitors, and active tests remain unimplemented.",color=TextMuted,fontSize=12.sp)
                         } } }
                         item { SectionHeader("Communication log","") }
                         item { Text(log,color=TextMuted,fontSize=11.sp) }
