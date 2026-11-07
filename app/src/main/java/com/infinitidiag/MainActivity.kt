@@ -59,11 +59,15 @@ private fun InfinitiDiagUX() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     val adapter = remember { BluetoothAdapter.getDefaultAdapter() }
-    var permission by remember {
-        mutableStateOf(Build.VERSION.SDK_INT < 31 ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED)
-    }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { permission = it }
+    fun hasBluetoothPermissions(): Boolean =
+        Build.VERSION.SDK_INT < 31 ||
+            (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+             ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED)
+
+    var permission by remember { mutableStateOf(hasBluetoothPermissions()) }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results -> permission = results.values.all { it } && hasBluetoothPermissions() }
     var paired by remember { mutableStateOf<List<BluetoothDevice>>(emptyList()) }
     var chosen by remember { mutableStateOf<BluetoothDevice?>(null) }
     var socket by remember { mutableStateOf<BluetoothSocket?>(null) }
@@ -101,7 +105,10 @@ private fun InfinitiDiagUX() {
 
     fun refresh() {
         if (!permission) {
-            if (Build.VERSION.SDK_INT >= 31) permissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+            if (Build.VERSION.SDK_INT >= 31) permissionLauncher.launch(arrayOf(
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_SCAN
+            ))
             return
         }
         try {
@@ -130,7 +137,10 @@ private fun InfinitiDiagUX() {
     }
 
     fun connect() {
-        if (!permission) { if(Build.VERSION.SDK_INT>=31) permissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT); return }
+        if (!permission) { if(Build.VERSION.SDK_INT>=31) permissionLauncher.launch(arrayOf(
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_SCAN
+            )); return }
         val device=chosen ?: run { status="Select a paired adapter"; return }
         connecting=true; status="Connecting to adapter..."
         scope.launch {
